@@ -39,35 +39,91 @@ function apply(ctx, config) {
   }
 
   // ===== 群邀请自动处理 =====
-  ctx.on('guild-request', async (session) => {
-    const inviterId = String(session.userId)
+  // 尝试多个事件名兼容不同 OneBot 实现
+  const handleInvite = async (session) => {
+    const inviterId = String(session.userId || session.operatorId || '')
+    const groupId = String(session.guildId || session.groupId || '')
+    const flag = session.messageId || session.requestId || ''
+
+    ctx.logger.info(`[群邀请] 收到请求: inviter=${inviterId}, group=${groupId}, flag=${flag}`)
+    ctx.logger.info(`[群邀请] session keys: ${Object.keys(session).join(', ')}`)
+
+    if (!inviterId || inviterId === 'undefined') {
+      ctx.logger.warn(`[群邀请] 无法获取邀请人ID，session: ${JSON.stringify(session)}`)
+      return
+    }
 
     if (whitelist.includes(inviterId)) {
+      // 方法 1: Koishi 标准 API
       try {
-        await session.bot.handleGuildRequest(session.messageId, true)
-        ctx.logger.info(`[白名单通过] ${inviterId} 邀请入群 ${session.guildId}`)
-        if (config.logChannel) {
-          session.bot.sendMessage(config.logChannel,
-            `✅ ${inviterId} 邀请入群 ${session.guildId} 已自动通过`
-          ).catch(() => {})
+        await session.bot.handleGuildRequest(flag, true)
+        ctx.logger.info(`[白名单通过] ${inviterId} 邀请入群 ${groupId}`)
+        logToChannel(`✅ ${inviterId} 邀请入群 ${groupId} 已自动通过`)
+        return
+      } catch (e1) {
+        ctx.logger.warn(`[群邀请] handleGuildRequest 失败: ${e1.message}，尝试原始 API`)
+      }
+
+      // 方法 2: OneBot 原始 set_group_add_request
+      try {
+        const bot = session.bot.internal || session.bot
+        if (typeof bot.setGroupAddRequest === 'function') {
+          await bot.setGroupAddRequest(flag, 'invite', true, '')
+        } else if (typeof bot.set_group_add_request === 'function') {
+          await bot.set_group_add_request(flag, 'invite', true, '')
+        } else {
+          throw new Error('set_group_add_request 不可用')
         }
-      } catch (e) {
-        ctx.logger.error(`自动通过失败: ${e.message}`)
-        if (config.logChannel) {
-          session.bot.sendMessage(config.logChannel,
-            `❌ ${inviterId} 邀请入群 ${session.guildId} 通过失败: ${e.message}`
-          ).catch(() => {})
-        }
+        ctx.logger.info(`[白名单通过-raw] ${inviterId} 邀请入群 ${groupId}`)
+        logToChannel(`✅ ${inviterId} 邀请入群 ${groupId} 已自动通过(raw)`)
+        return
+      } catch (e2) {
+        ctx.logger.error(`[群邀请] 原始 API 也失败: ${e2.message}`)
+        logToChannel(`❌ ${inviterId} 邀请入群 ${groupId} 通过失败: ${e2.message}`)
       }
     } else {
-      ctx.logger.info(`[白名单拒绝] ${inviterId} 邀请入群 ${session.guildId}（不在白名单）`)
-      if (config.logChannel) {
-        session.bot.sendMessage(config.logChannel,
-          `⛔ ${inviterId} 邀请入群 ${session.guildId} 已拒绝（不在白名单）`
-        ).catch(() => {})
+      ctx.logger.info(`[白名单拒绝] ${inviterId} 邀请入群 ${groupId}（不在白名单）`)
+      logToChannel(`⛔ ${inviterId} 邀请入群 ${groupId} 已拒绝（不在白名单）`)
+    }
+  }
+
+  function logToChannel(msg) {
+    if (config.logChannel) {
+      // 需要获取 bot 实例来发消息，用第一个可用 bot
+      for (const bot of ctx.bots) {
+        bot.sendMessage(config.logChannel, msg).catch(() => {})
+        break
       }
     }
+  }
+
+  // 标准 Koishi 事件
+  ctx.on('guild-request', handleInvite)
+
+  // 兼容：某些 OneBot 适配器用不同的事件名
+  ctx.on('guild-member-request', (session) => {
+    ctx.logger.info(`[群邀请] guild-member-request 事件: ${JSON.stringify(session)}`)
   })
+
+  // 兼容：直接监听内部事件
+  if (ctx.bots && ctx.bots.length > 0) {
+    const bot = ctx.bots[0]
+    if (bot.internal) {
+      bot.internal.on('request', (data) => {
+        ctx.logger.info(`[群邀请] 原始 request 事件: ${JSON.stringify(data)}`)
+        // 如果是群邀请，尝试处理
+        if (data && (data.request_type === 'group' || data.sub_type === 'invite')) {
+          const fakeSession = {
+            userId: data.user_id,
+            guildId: data.group_id,
+            messageId: data.flag,
+            bot: bot,
+          }
+          handleInvite(fakeSession)
+        }
+      })
+    }
+  }
 
   // ===== 管理命令 =====
   ctx.command('invitelist', '查看群邀请白名单')
