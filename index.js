@@ -105,23 +105,13 @@ function apply(ctx, config) {
     ctx.logger.info(`[群邀请] guild-member-request 事件: ${JSON.stringify(session)}`)
   })
 
-  // 兼容：直接监听内部事件
+  // 日志：打印 bot 内部可用方法（调试用）
   if (ctx.bots && ctx.bots.length > 0) {
     const bot = ctx.bots[0]
-    if (bot.internal) {
-      bot.internal.on('request', (data) => {
-        ctx.logger.info(`[群邀请] 原始 request 事件: ${JSON.stringify(data)}`)
-        // 如果是群邀请，尝试处理
-        if (data && (data.request_type === 'group' || data.sub_type === 'invite')) {
-          const fakeSession = {
-            userId: data.user_id,
-            guildId: data.group_id,
-            messageId: data.flag,
-            bot: bot,
-          }
-          handleInvite(fakeSession)
-        }
-      })
+    const internal = bot.internal
+    if (internal) {
+      const methods = Object.keys(internal).filter(k => typeof internal[k] === 'function')
+      ctx.logger.info(`[群邀请] bot.internal 方法: ${methods.join(', ')}`)
     }
   }
 
