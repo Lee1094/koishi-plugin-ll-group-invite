@@ -39,19 +39,12 @@ function apply(ctx, config) {
   }
 
   // ===== 群邀请自动处理 =====
-  ctx.on('guild-member-request', async (session) => {
-    if (session.subtype !== 'invite') return
-
+  ctx.on('guild-request', async (session) => {
     const inviterId = String(session.userId)
 
     if (whitelist.includes(inviterId)) {
       try {
-        await session.bot.handleGuildMemberRequest(
-          session.messageId,
-          session.guildId,
-          session.userId,
-          true
-        )
+        await session.bot.handleGuildRequest(session.messageId, true)
         ctx.logger.info(`[白名单通过] ${inviterId} 邀请入群 ${session.guildId}`)
         if (config.logChannel) {
           session.bot.sendMessage(config.logChannel,
