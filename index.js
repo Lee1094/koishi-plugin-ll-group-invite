@@ -39,55 +39,63 @@ function apply(ctx, config) {
   }
 
   // ===== 群邀请自动处理 =====
-  // 尝试多个事件名兼容不同 OneBot 实现
   const handleInvite = async (session) => {
     const inviterId = String(session.userId || session.operatorId || '')
     const groupId = String(session.guildId || session.groupId || '')
     const flag = session.messageId || session.requestId || ''
 
-    ctx.logger.info(`[群邀请] 收到请求: inviter=${inviterId}, group=${groupId}, flag=${flag}`)
-    ctx.logger.info(`[群邀请] session keys: ${Object.keys(session).join(', ')}`)
+    ctx.logger.info(`[群邀请] 收到: inviter=${inviterId}, group=${groupId}, flag=${flag}`)
 
     if (!inviterId || inviterId === 'undefined') {
-      ctx.logger.warn(`[群邀请] 无法获取邀请人ID，session: ${JSON.stringify(session)}`)
+      ctx.logger.warn(`[群邀请] 无法获取邀请人ID, session: ${JSON.stringify(session)}`)
       return
     }
 
     // 管理员 或 白名单内用户 允许邀请
     const allowed = isAdmin(inviterId) || whitelist.includes(inviterId)
-
-    if (allowed) {
-      // 方法 1: Koishi 标准 API
-      try {
-        await session.bot.handleGuildRequest(flag, true)
-        ctx.logger.info(`[白名单通过] ${inviterId} 邀请入群 ${groupId}${isAdmin(inviterId) ? '(管理员)' : ''}`)
-        logToChannel(`✅ ${inviterId} 邀请入群 ${groupId} 已自动通过${isAdmin(inviterId) ? '(管理员)' : ''}`)
-        return
-      } catch (e1) {
-        ctx.logger.warn(`[群邀请] handleGuildRequest 失败: ${e1.message}，尝试原始 API`)
-      }
-
-      // 方法 2: OneBot 原始 set_group_add_request
-      try {
-        const bot = session.bot.internal || session.bot
-        if (typeof bot.setGroupAddRequest === 'function') {
-          await bot.setGroupAddRequest(flag, 'invite', true, '')
-        } else if (typeof bot.set_group_add_request === 'function') {
-          await bot.set_group_add_request(flag, 'invite', true, '')
-        } else {
-          throw new Error('set_group_add_request 不可用')
-        }
-        ctx.logger.info(`[白名单通过-raw] ${inviterId} 邀请入群 ${groupId}`)
-        logToChannel(`✅ ${inviterId} 邀请入群 ${groupId} 已自动通过(raw)`)
-        return
-      } catch (e2) {
-        ctx.logger.error(`[群邀请] 原始 API 也失败: ${e2.message}`)
-        logToChannel(`❌ ${inviterId} 邀请入群 ${groupId} 通过失败: ${e2.message}`)
-      }
-    } else {
-      ctx.logger.info(`[白名单拒绝] ${inviterId} 邀请入群 ${groupId}（非管理员也不在白名单）`)
-      logToChannel(`⛔ ${inviterId} 邀请入群 ${groupId} 已拒绝（非管理员/不在白名单）`)
+    if (!allowed) {
+      ctx.logger.info(`[群邀请] 拒绝: ${inviterId}（非管理员/不在白名单）`)
+      logToChannel(`⛔ ${inviterId} 邀请入群 ${groupId} 已拒绝`)
+      return
     }
+
+    // 尝试多种 API / flag 格式
+    const flagParts = flag.split('|')
+    const methods = [
+      // 方法 1: Koishi 标准
+      async () => {
+        ctx.logger.info('[群邀请] 尝试 handleGuildRequest')
+        await session.bot.handleGuildRequest(flag, true)
+      },
+      // 方法 2: 只用 flag 第二段（纯请求 ID）
+      async () => {
+        if (!flagParts[1]) throw new Error('flag 格式不对')
+        ctx.logger.info(`[群邀请] 尝试 set_group_add_request flag=${flagParts[1]}`)
+        const bot = session.bot.internal || session.bot
+        const api = bot.set_group_add_request || bot.setGroupAddRequest
+        if (!api) throw new Error('set_group_add_request 不可用')
+        await api.call(bot, flagParts[1], 'invite', true, '')
+      },
+      // 方法 3: 直接用 session.bot 的 request 方法
+      async () => {
+        ctx.logger.info('[群邀请] 尝试 bot.request set_group_add_request')
+        await session.bot.request('set_group_add_request', { flag: flagParts[1] || flag, sub_type: 'invite', approve: true })
+      },
+    ]
+
+    for (const fn of methods) {
+      try {
+        await fn()
+        ctx.logger.info(`[白名单通过] ${inviterId} 邀请入群 ${groupId}${isAdmin(inviterId) ? '(管理员)' : ''}`)
+        logToChannel(`✅ ${inviterId} 邀请入群 ${groupId} 已自动通过`)
+        return
+      } catch (e) {
+        ctx.logger.warn(`[群邀请] 尝试失败: ${e.message}`)
+      }
+    }
+
+    ctx.logger.error(`[群邀请] 所有方法均失败`)
+    logToChannel(`❌ ${inviterId} 邀请入群 ${groupId} 通过失败（API 不兼容）`)
   }
 
   function logToChannel(msg) {
