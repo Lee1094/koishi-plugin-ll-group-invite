@@ -53,12 +53,15 @@ function apply(ctx, config) {
       return
     }
 
-    if (whitelist.includes(inviterId)) {
+    // 管理员 或 白名单内用户 允许邀请
+    const allowed = isAdmin(inviterId) || whitelist.includes(inviterId)
+
+    if (allowed) {
       // 方法 1: Koishi 标准 API
       try {
         await session.bot.handleGuildRequest(flag, true)
-        ctx.logger.info(`[白名单通过] ${inviterId} 邀请入群 ${groupId}`)
-        logToChannel(`✅ ${inviterId} 邀请入群 ${groupId} 已自动通过`)
+        ctx.logger.info(`[白名单通过] ${inviterId} 邀请入群 ${groupId}${isAdmin(inviterId) ? '(管理员)' : ''}`)
+        logToChannel(`✅ ${inviterId} 邀请入群 ${groupId} 已自动通过${isAdmin(inviterId) ? '(管理员)' : ''}`)
         return
       } catch (e1) {
         ctx.logger.warn(`[群邀请] handleGuildRequest 失败: ${e1.message}，尝试原始 API`)
@@ -82,8 +85,8 @@ function apply(ctx, config) {
         logToChannel(`❌ ${inviterId} 邀请入群 ${groupId} 通过失败: ${e2.message}`)
       }
     } else {
-      ctx.logger.info(`[白名单拒绝] ${inviterId} 邀请入群 ${groupId}（不在白名单）`)
-      logToChannel(`⛔ ${inviterId} 邀请入群 ${groupId} 已拒绝（不在白名单）`)
+      ctx.logger.info(`[白名单拒绝] ${inviterId} 邀请入群 ${groupId}（非管理员也不在白名单）`)
+      logToChannel(`⛔ ${inviterId} 邀请入群 ${groupId} 已拒绝（非管理员/不在白名单）`)
     }
   }
 
@@ -116,10 +119,10 @@ function apply(ctx, config) {
   }
 
   // ===== 管理命令 =====
-  ctx.command('invitelist', '查看群邀请白名单')
+  ctx.command('invitelist', '查看群邀请白名单（管理员始终可邀请）')
     .action(() => {
-      if (whitelist.length === 0) return '白名单为空'
-      return `当前白名单（${whitelist.length}人）：\n${whitelist.join('\n')}`
+      if (whitelist.length === 0) return '白名单为空（管理员始终可邀请）'
+      return `当前白名单（${whitelist.length}人，管理员始终可邀请）：\n${whitelist.join('\n')}`
     })
 
   ctx.command('invitelist.add <qq:string>', '添加群邀请白名单')
