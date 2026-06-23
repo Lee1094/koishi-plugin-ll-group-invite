@@ -1,6 +1,6 @@
 {
   "name": "koishi-plugin-ll-group-invite",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "LLOneBot whitelist-based group invite auto-approval",
   "main": "index.js",
   "license": "MIT",

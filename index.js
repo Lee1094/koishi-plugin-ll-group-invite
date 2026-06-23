@@ -59,43 +59,27 @@ function apply(ctx, config) {
       return
     }
 
-    // 尝试多种 API / flag 格式
-    const flagParts = flag.split('|')
-    const methods = [
-      // 方法 1: Koishi 标准
-      async () => {
-        ctx.logger.info('[群邀请] 尝试 handleGuildRequest')
-        await session.bot.handleGuildRequest(flag, true)
-      },
-      // 方法 2: 只用 flag 第二段（纯请求 ID）
-      async () => {
-        if (!flagParts[1]) throw new Error('flag 格式不对')
-        ctx.logger.info(`[群邀请] 尝试 set_group_add_request flag=${flagParts[1]}`)
-        const bot = session.bot.internal || session.bot
-        const api = bot.set_group_add_request || bot.setGroupAddRequest
-        if (!api) throw new Error('set_group_add_request 不可用')
-        await api.call(bot, flagParts[1], 'invite', true, '')
-      },
-      // 方法 3: 直接用 session.bot 的 request 方法
-      async () => {
-        ctx.logger.info('[群邀请] 尝试 bot.request set_group_add_request')
-        await session.bot.request('set_group_add_request', { flag: flagParts[1] || flag, sub_type: 'invite', approve: true })
-      },
-    ]
+    // LLOneBot 的 set_group_add_request 不接收 sub_type！类型在 flag 里
+    // Koishi 的 handleGuildRequest 会自动加 sub_type → 导致 1200
+    // 直接调原始 API，只传 flag + approve
+    const bot = session.bot.internal || session.bot
+    const api = bot.set_group_add_request || bot.setGroupAddRequest
 
-    for (const fn of methods) {
-      try {
-        await fn()
-        ctx.logger.info(`[白名单通过] ${inviterId} 邀请入群 ${groupId}${isAdmin(inviterId) ? '(管理员)' : ''}`)
-        logToChannel(`✅ ${inviterId} 邀请入群 ${groupId} 已自动通过`)
-        return
-      } catch (e) {
-        ctx.logger.warn(`[群邀请] 尝试失败: ${e.message}`)
-      }
+    if (!api) {
+      ctx.logger.error('[群邀请] set_group_add_request 不可用')
+      logToChannel(`❌ ${inviterId} 邀请入群 ${groupId} 失败（API 不可用）`)
+      return
     }
 
-    ctx.logger.error(`[群邀请] 所有方法均失败`)
-    logToChannel(`❌ ${inviterId} 邀请入群 ${groupId} 通过失败（API 不兼容）`)
+    try {
+      // 不带 sub_type！LLOneBot 从 flag 的 type 段判断 invite/add
+      await api.call(bot, flag, true)
+      ctx.logger.info(`[白名单通过] ${inviterId} 邀请入群 ${groupId}${isAdmin(inviterId) ? '(管理员)' : ''}`)
+      logToChannel(`✅ ${inviterId} 邀请入群 ${groupId} 已自动通过`)
+    } catch (e) {
+      ctx.logger.error(`[群邀请] 通过失败: ${e.message}`)
+      logToChannel(`❌ ${inviterId} 邀请入群 ${groupId} 失败: ${e.message}`)
+    }
   }
 
   function logToChannel(msg) {
